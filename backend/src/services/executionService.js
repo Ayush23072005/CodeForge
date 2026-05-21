@@ -54,6 +54,8 @@ async function executeCodeStream(language, code, input = '', callbacks) {
       '--memory', limits.memory,
       `--cpus=${limits.cpus}`,
       `--pids-limit=${limits.pidsLimit}`,
+      '-e', 'MPLCONFIGDIR=/tmp/matplotlib',
+      '-e', 'HOME=/tmp',
       '-v', `${tempDir}:/sandbox:rw`,
       '-w', '/sandbox',
       '-u', 'runner',
