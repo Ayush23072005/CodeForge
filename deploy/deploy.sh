@@ -82,10 +82,15 @@ echo "   ✅ Java image built"
 # ── 7. Configure Services ───────────────────────────────────
 echo "⚙️  [7/7] Configuring services..."
 
-# Copy Nginx config
-cp deploy/nginx.conf /etc/nginx/sites-available/codeforge
-ln -sf /etc/nginx/sites-available/codeforge /etc/nginx/sites-enabled/codeforge
-rm -f /etc/nginx/sites-enabled/default
+# Copy Nginx config (handle both sites-available and conf.d layouts)
+if [ -d /etc/nginx/sites-available ]; then
+    cp deploy/nginx.conf /etc/nginx/sites-available/codeforge
+    ln -sf /etc/nginx/sites-available/codeforge /etc/nginx/sites-enabled/codeforge
+    rm -f /etc/nginx/sites-enabled/default
+else
+    cp deploy/nginx.conf /etc/nginx/conf.d/codeforge.conf
+    rm -f /etc/nginx/conf.d/default.conf
+fi
 nginx -t && systemctl restart nginx
 echo "   ✅ Nginx configured"
 

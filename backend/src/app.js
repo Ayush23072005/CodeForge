@@ -14,7 +14,20 @@ app.use(helmet({
   contentSecurityPolicy: false, // Allow inline scripts from React
 }));
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: function (origin, callback) {
+    // Allow requests with no origin (same-origin, mobile apps, curl, etc.)
+    if (!origin) return callback(null, true);
+    const allowedOrigins = [
+      process.env.FRONTEND_URL,
+      'http://localhost:3000',
+      'http://localhost:5173',
+    ].filter(Boolean);
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    // In production behind Nginx, requests are same-origin so origin may match the server itself
+    return callback(null, true);
+  },
   credentials: true,
 }));
 

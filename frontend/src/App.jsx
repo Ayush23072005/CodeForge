@@ -155,7 +155,7 @@ function AppContent() {
   }, []);
 
   // ── Run code ──
-  const handleRun = useCallback(() => {
+  const handleRun = useCallback(async () => {
     if (!code.trim()) {
       toast.error('Please write some code first!');
       return;
@@ -165,70 +165,100 @@ function AppContent() {
       abortRef.current.abort();
     }
 
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setIsRunning(true);
     setOutput('');
     setError('');
     setStatus('');
     setExecutionTime(0);
 
-    const xhr = new XMLHttpRequest();
-    abortRef.current = xhr;
-
-    xhr.open('POST', `${API_URL}/run`, true);
-    xhr.setRequestHeader('Content-Type', 'application/json');
-
+    const headers = { 'Content-Type': 'application/json' };
     const token = localStorage.getItem('codeforge-token');
-    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    if (token) headers['Authorization'] = `Bearer ${token}`;
 
-    let lastIndex = 0;
+    try {
+      const response = await fetch(`${API_URL}/run`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ code, language, input }),
+        signal: controller.signal,
+      });
 
-    const processChunks = () => {
-      const text = xhr.responseText.substring(lastIndex);
-      lastIndex = xhr.responseText.length;
-
-      const parts = text.split('\n\n');
-      for (const part of parts) {
-        const trimmed = part.trim();
-        if (!trimmed.startsWith('data: ')) continue;
-        try {
-          const event = JSON.parse(trimmed.slice(6));
-          if (event.type === 'stdout') {
-            setOutput((prev) => prev + event.data);
-          } else if (event.type === 'stderr') {
-            setError((prev) => prev + event.data);
-          } else if (event.type === 'done') {
-            setExecutionTime(event.executionTime || 0);
-            setStatus(event.status || 'success');
-            if (event.error) setError((prev) => prev + event.error);
-            if (event.status === 'success') {
-              toast.success(`Executed in ${event.executionTime}ms`);
-            } else if (event.status === 'timeout') {
-              toast.error('Execution timed out');
-            } else if (event.status !== 'success') {
-              toast.error('Execution error');
-            }
-          }
-        } catch { /* ignore parse errors */ }
+      // If the response is JSON (error from middleware/validation), handle it
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const data = await response.json();
+        setError(data.error || 'Execution failed');
+        setStatus('error');
+        toast.error(data.error || 'Execution failed');
+        setIsRunning(false);
+        abortRef.current = null;
+        return;
       }
-    };
 
-    xhr.onprogress = processChunks;
+      if (!response.ok) {
+        setError(`Server error: ${response.status}`);
+        setStatus('error');
+        toast.error('Server error');
+        setIsRunning(false);
+        abortRef.current = null;
+        return;
+      }
 
-    xhr.onload = () => {
-      processChunks();
+      // Read the SSE stream using the ReadableStream API
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // Process complete SSE events from the buffer
+        const parts = buffer.split('\n\n');
+        // Keep the last part in the buffer (it may be incomplete)
+        buffer = parts.pop() || '';
+
+        for (const part of parts) {
+          const trimmed = part.trim();
+          if (!trimmed.startsWith('data: ')) continue;
+          try {
+            const event = JSON.parse(trimmed.slice(6));
+            if (event.type === 'stdout') {
+              setOutput((prev) => prev + event.data);
+            } else if (event.type === 'stderr') {
+              setError((prev) => prev + event.data);
+            } else if (event.type === 'done') {
+              setExecutionTime(event.executionTime || 0);
+              setStatus(event.status || 'success');
+              if (event.error) setError((prev) => prev + event.error);
+              if (event.status === 'success') {
+                toast.success(`Executed in ${event.executionTime}ms`);
+              } else if (event.status === 'timeout') {
+                toast.error('Execution timed out');
+              } else if (event.status !== 'success') {
+                toast.error('Execution error');
+              }
+            }
+          } catch { /* ignore parse errors */ }
+        }
+      }
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        // User cancelled — do nothing
+      } else {
+        setError('Failed to execute code. Is the backend running?');
+        setStatus('error');
+        toast.error('Connection failed');
+      }
+    } finally {
       setIsRunning(false);
       abortRef.current = null;
-    };
-
-    xhr.onerror = () => {
-      setError('Failed to execute code. Is the backend running?');
-      setStatus('error');
-      toast.error('Connection failed');
-      setIsRunning(false);
-      abortRef.current = null;
-    };
-
-    xhr.send(JSON.stringify({ code, language, input }));
+    }
   }, [code, language, input]);
 
   // Ctrl+Enter shortcut
